@@ -8,24 +8,6 @@
  * the Free Software Foundation; either version 2 of the License, or
  * (at your option) any later version.
  *                                                                         
- *   CH347 is a high-speed USB bus converter chip that provides UART, I2C  
- *   and SPI synchronous serial ports and JTAG interface through USB bus.  
- *                                                                         
- *   The SPI interface by CH347 can supports transmission frequency       
- *   configuration up to 60MHz.                                            
- *                                                                         
- *   The USB2.0 to spi scheme based on CH347 can be used to build         
- *   customized USB high-speed spi debugger and other products.           
- *                                                                         
- *            _____________                                                
- *           |             |____SPI (MISO,MOSI,SCK,CSC0,CSC1)            
- *      USB__|   CH347T/F  |                                               
- *           |_____________|____(UART/I2C/JTAG/SWD/GPIO)             
- *            ______|______                                                
- *           |             |                                               
- *           | 8 MHz XTAL  |                                               
- *           |_____________|     
- * 
  * This program is distributed in the hope that it will be useful,
  * but WITHOUT ANY WARRANTY; without even the implied warranty of
  * MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
@@ -64,6 +46,11 @@
 #define CH347_PACKET_SIZE 510
 #define CH347_MAX_DATA_LEN (CH347_PACKET_SIZE - 3)
 
+struct device_speeds {
+	const char *name;
+	const int speed;
+};
+
 struct ch347_spi_data {
 	struct libusb_device_handle *handle;
 	int interface;
@@ -71,13 +58,26 @@ struct ch347_spi_data {
 
 /* TODO: Add support for HID mode */
 static const struct dev_entry devs_ch347_spi[] = {
-	{0x1A86, 0x55DD, OK, "QinHeng Electronics", "USB To UART+SPI+I2C"},   //CH347T
-	{0x1A86, 0x55DE, OK, "QinHeng Electronics", "USB To UART+SPI+I2C"},   //CH347F
+	{0x1A86, 0x55DB, OK, "QinHeng Electronics", "USB To UART+SPI+I2C"},   /* CH347T */
+	{0x1A86, 0x55DE, OK, "QinHeng Electronics", "USB To UART+SPI+I2C"},   /* CH347F */
 	{0}
 };
-int ch347_interface[] = {
-	2,       //CH347T interface number
-	4,       //CH347F interface number
+
+static const struct device_speeds spispeeds[] = {
+	{"60M",		0x0},
+	{"30M",		0x1},
+	{"15M",		0x2},
+	{"7.5M",	0x3},
+	{"3.75M",	0x4},
+	{"1.875M",	0x5},
+	{"937.5K",	0x6},
+	{"468.75K",	0x7},
+	{NULL,		0x0}
+};
+
+static int ch347_interface[] = {
+	CH347T_IFACE,
+	CH347F_IFACE,
 };
 
 static int ch347_spi_shutdown(void *data)
@@ -288,9 +288,11 @@ static const struct spi_master spi_master_ch347_spi = {
 /* Largely copied from ch341a_spi.c */
 static int ch347_spi_init(const struct programmer_cfg *cfg)
 {
+	char *arg;
 	uint16_t vid = devs_ch347_spi[0].vendor_id;
 	uint16_t pid = 0;
 	int index = 0;
+	int spispeed = 0x0;    /* defaulet 60M SPI */
 	struct ch347_spi_data *ch347_data = calloc(1, sizeof(*ch347_data));
 	if (!ch347_data) {
 		msg_perr("Could not allocate space for SPI data\n");
@@ -303,7 +305,6 @@ static int ch347_spi_init(const struct programmer_cfg *cfg)
 		free(ch347_data);
 		return 1;
 	}
-
 	/* Enable information, warning, and error messages (only). */
 #if LIBUSB_API_VERSION < 0x01000106
 	libusb_set_debug(NULL, 3);
@@ -320,10 +321,10 @@ static int ch347_spi_init(const struct programmer_cfg *cfg)
 		}
 		index++;
 	}
-	if (!ch347_data->handle){
-		msg_perr("Couldn't open device %04x:%04x.\n", vid, pid);
-			free(ch347_data);
-			return 1;
+	if (!ch347_data->handle) {
+		msg_perr("Couldn't find CH347.\n");
+		free(ch347_data);
+		return 1;
 	} 
 
 	ret = libusb_detach_kernel_driver(ch347_data->handle, ch347_data->interface);
@@ -333,7 +334,7 @@ static int ch347_spi_init(const struct programmer_cfg *cfg)
 
 	ret = libusb_claim_interface(ch347_data->handle, ch347_data->interface);
 	if (ret != 0) {
-		msg_perr("Failed to claim interface 2: '%s'\n", libusb_error_name(ret));
+		msg_perr("Failed to claim interface %d: '%s'\n", ch347_data->interface, libusb_error_name(ret));
 		goto error_exit;
 	}
 
@@ -356,11 +357,22 @@ static int ch347_spi_init(const struct programmer_cfg *cfg)
 		(desc.bcdDevice >> 0) & 0x000F);
 
 	/* TODO: add programmer cfg for things like CS pin and divisor */
-	if (ch347_spi_config(ch347_data, 2) < 0)
+	arg = extract_programmer_param_str(cfg, "spispeed");
+	if (arg) {
+		for (index = 0; spispeeds[index].name; index++) {
+			if (!strncasecmp(spispeeds[index].name, arg, strlen(spispeeds[index].name))) {
+				spispeed = spispeeds[index].speed;
+				break;
+			}
+		}
+	}
+	if (!spispeeds[index].name || !arg)
+		msg_perr("Invalid SPI speed, using defaul(60M clock spi).\n");
+	free(arg);
+	/* TODO: add programmer cfg for things like CS pin and divisor */
+	if (ch347_spi_config(ch347_data, spispeed) < 0)
 		goto error_exit;
-
 	return register_spi_master(&spi_master_ch347_spi, ch347_data);
-
 error_exit:
 	ch347_spi_shutdown(ch347_data);
 	return 1;
