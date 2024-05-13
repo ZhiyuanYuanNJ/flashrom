@@ -28,7 +28,7 @@
 /* loops per microsecond */
 static unsigned long micro = 1;
 
-__attribute__ ((noinline)) void myusec_delay(unsigned int usecs)
+__attribute__ ((noinline)) static void myusec_delay(unsigned int usecs)
 {
 	unsigned long i;
 	for (i = 0; i < usecs * micro; i++) {
@@ -153,19 +153,20 @@ void internal_sleep(unsigned int usecs)
 	usleep(usecs % 1000000);
 }
 
+static const unsigned min_sleep = CONFIG_DELAY_MINIMUM_SLEEP_US;
+
 /* Precise delay. */
 void default_delay(unsigned int usecs)
 {
 	static bool calibrated = false;
 
-	/* If the delay is >0.1 s, use internal_sleep because timing does not need to be so precise. */
-	if (usecs > 100000) {
-		internal_sleep(usecs);
-	} else {
+	if (usecs < min_sleep) {
 		if (!calibrated) {
 			myusec_calibrate_delay();
 			calibrated = true;
 		}
 		myusec_delay(usecs);
+	} else {
+		internal_sleep(usecs);
 	}
 }
