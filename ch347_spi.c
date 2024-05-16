@@ -381,8 +381,8 @@ static int ch347_spi_init(const struct programmer_cfg *cfg)
 {
 	char *arg;
     int open_res = -1;
-    uint16_t vid = CH347_VID;
-	uint16_t pid = devs_ch347_spi[0].device_id;
+    uint16_t vid = devs_ch347_spi[0].vendor_id;
+	uint16_t pid = 0;
 	int spispeed = 0x0;    //defaulet 60M SPI
 	struct ch347_spi_data *ch347_data = calloc(1, sizeof(*ch347_data));
 	int i = 0;
